@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest>=8
+httpx2   # lo exige starlette.testclient en versiones recientes (en antiguas: httpx)

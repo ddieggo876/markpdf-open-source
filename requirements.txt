@@ -1,0 +1,33 @@
+# Versiones exactas probadas en local (Python 3.12). Starlette 1.8 requiere Python >= 3.11.
+
+# Servidor web
+fastapi==0.143.3
+starlette==1.8.0
+pydantic==2.14.1
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+
+# Cuentas: Google Login (OpenID Connect), sesiones y PostgreSQL. Solo se usan con MARKPDF_AUTH_ENABLED=true.
+Authlib==1.9.1
+joserfc==1.7.5
+cryptography==50.0.2
+httpx2==2.14.0          # cliente HTTP que usa Authlib (habla con Google)
+itsdangerous==2.2.0     # firma de la cookie de sesión (SessionMiddleware)
+psycopg[binary]==3.3.6
+
+# Motor de conversión: estas tres versiones deben ser siempre idénticas entre sí
+pymupdf==1.28.2
+pymupdf4llm==1.28.2
+pymupdf-layout==1.28.2
+
+# Dependencias del motor (pymupdf4llm y pymupdf-layout), fijadas para reproducir el resultado actual
+onnxruntime==1.31.0
+numpy==2.5.4
+networkx==3.7
+tabulate==0.10.0
+psutil==7.2.2
+PyYAML==6.0.3
+
+# Opcional
+# OCR: MarkPDF solo lo usa para páginas sin texto seleccionable y si hay un motor instalado
+#      (Tesseract con sus datos de idioma, o rapidocr). Sin motor, avisa en la interfaz.

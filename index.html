@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<!--
+  MarkPDF - convierte PDF en Markdown para usar como contexto de LLM.
+  Copyright (C) 2026 MarkPDF contributors
+  SPDX-License-Identifier: AGPL-3.0-or-later
+  Software libre bajo la GNU AGPL version 3 o posterior; consulta el archivo LICENSE.
+-->
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MarkPDF · Convierte PDF a Markdown para IAs</title>
+  <meta name="description" content="MarkPDF convierte tus PDF en Markdown estructurado y legible para modelos de lenguaje, con perfiles configurables, informe de lo eliminado y métricas transparentes." />
+  <meta name="theme-color" content="#0B0D12" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="MarkPDF · PDF a Markdown para IAs" />
+  <meta property="og:description" content="Conversión configurable, con informe de cambios y métricas con su fuente." />
+  <link rel="icon" type="image/png" href="/static/logo-header.png" />
+
+  <!-- Modo oscuro por defecto; se respeta la elección guardada por el usuario -->
+  <script>
+    (() => {
+      const dark = localStorage.getItem('theme') !== 'light';
+      document.documentElement.classList.toggle('dark', dark);
+    })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' };</script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <style>
+    summary::-webkit-details-marker { display: none; }
+    .dark { color-scheme: dark; }
+    .md-preview h1 { font-size: 1.5rem; font-weight: 700; margin: 1rem 0 .5rem; }
+    .md-preview h2 { font-size: 1.25rem; font-weight: 700; margin: 1rem 0 .5rem; }
+    .md-preview h3 { font-size: 1.1rem; font-weight: 600; margin: .9rem 0 .4rem; }
+    .md-preview p { margin: .5rem 0; line-height: 1.6; }
+    .md-preview ul { list-style: disc; padding-left: 1.4rem; margin: .5rem 0; }
+    .md-preview ol { list-style: decimal; padding-left: 1.4rem; margin: .5rem 0; }
+    .md-preview table { border-collapse: collapse; margin: .75rem 0; font-size: .85rem; }
+    .md-preview th, .md-preview td { border: 1px solid #e2e8f0; padding: .35rem .6rem; }
+    .md-preview th { background: #f8fafc; font-weight: 600; }
+    .md-preview code { background: #f1f5f9; padding: .1rem .3rem; border-radius: .25rem; font-size: .85em; }
+    .md-preview pre { background: #0f172a; color: #e2e8f0; padding: .75rem; border-radius: .5rem; overflow-x: auto; }
+    .md-preview pre code { background: transparent; padding: 0; }
+    .md-preview .img-ref { display: inline-block; border: 1px dashed #94a3b8; border-radius: .35rem; padding: .1rem .45rem; font-size: .8rem; color: #64748b; }
+    .md-preview blockquote { border-left: 3px solid #cbd5e1; padding-left: .75rem; color: #475569; }
+    .dark .md-preview th, .dark .md-preview td { border-color: rgba(255,255,255,.12); }
+    .dark .md-preview th { background: rgba(255,255,255,.06); }
+    .dark .md-preview code { background: rgba(255,255,255,.08); }
+    .dark .md-preview pre { background: #05070a; }
+    .dark .md-preview blockquote { border-color: rgba(255,255,255,.2); color: #94a3b8; }
+    .copied { background-color: #059669 !important; color: #fff !important; border-color: #059669 !important; }
+    @keyframes indeterminate { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+    .indeterminate { width: 40%; animation: indeterminate 1.2s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) { .indeterminate { animation: none; width: 100%; opacity: .6; } }
+    .opt-disabled { opacity: .55; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 dark:bg-[#0B0D12] dark:text-slate-200 transition-colors">
+
+  <a href="#dropzone" class="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-white focus:px-3 focus:py-2 focus:text-slate-900">Ir al convertidor</a>
+
+  <!-- Header (siempre oscuro para que el logo con texto claro sea legible) -->
+  <header class="bg-[#0B0D12] border-b border-white/10">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center" aria-label="MarkPDF - inicio">
+        <img src="/static/logo-header.png" alt="MarkPDF" class="h-8 w-auto" />
+      </a>
+
+      <!-- Sesión (solo visible si el servidor tiene el login activado y hay sesión iniciada) -->
+      <div id="authBox" class="hidden ml-auto mr-3 flex items-center gap-3 text-sm text-slate-300">
+        <span id="quotaCounter" class="hidden rounded-full border border-white/15 px-3 py-1 text-xs" aria-live="polite"></span>
+        <span id="userEmail" class="hidden max-w-[200px] truncate sm:inline"></span>
+        <button id="logoutBtn" type="button"
+          class="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/10 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">Cerrar sesión</button>
+      </div>
+
+      <button id="themeToggle" type="button" aria-label="Cambiar entre modo claro y oscuro" title="Cambiar tema"
+        class="h-9 w-9 grid place-items-center rounded-lg border border-white/10 text-slate-300 hover:bg-white/10 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">
+        <svg class="h-5 w-5 dark:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" />
+        </svg>
+        <svg class="h-5 w-5 hidden dark:block text-amber-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path stroke-linecap="round" d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-14 space-y-10">
+
+    <!-- Hero + Dropzone -->
+    <section class="max-w-4xl mx-auto text-center">
+      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight">MarkPDF</h1>
+      <p class="mt-3 text-slate-600 dark:text-slate-400">
+        Convierte tus PDF en Markdown estructurado, pensado para dárselo como contexto a un modelo de lenguaje.
+        Todo se procesa en este servidor, sin enviar el documento a ningún servicio externo.
+      </p>
+
+      <!-- Aviso de inicio de sesión (solo si el servidor lo exige y aún no hay sesión) -->
+      <div id="loginBox" class="hidden mt-6 rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-slate-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-slate-200">
+        <p>Para convertir PDF inicia sesión con Google. Incluye <span id="dailyLimit">3</span> conversiones gratuitas al día.</p>
+        <a id="loginBtn" href="/auth/login"
+          class="mt-3 inline-flex items-center justify-center rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400">Continuar con Google</a>
+      </div>
+
+      <label id="dropzone" for="fileInput"
+        class="mt-8 flex min-h-[260px] sm:min-h-[300px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-6 text-center cursor-pointer transition hover:border-blue-500 hover:bg-blue-50/50 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-400 dark:border-white/15 dark:bg-white/[0.03] dark:hover:border-blue-500 dark:hover:bg-blue-500/10">
+        <svg class="h-14 w-14 text-blue-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L8 8m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+        </svg>
+        <span class="text-lg font-medium">Arrastra tu PDF aquí</span>
+        <span class="mt-1 text-sm text-slate-500 dark:text-slate-400">o <span class="text-blue-600 dark:text-blue-400 underline">selecciona un archivo</span> · Máximo <span id="maxMb">10</span> MB</span>
+        <input id="fileInput" type="file" accept="application/pdf,.pdf" class="sr-only" />
+      </label>
+
+      <!-- Archivo seleccionado -->
+      <div id="fileCard" class="hidden mt-4 flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left dark:border-white/10 dark:bg-white/[0.04]">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="h-10 w-10 shrink-0 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400 grid place-items-center text-xs font-bold" aria-hidden="true">PDF</div>
+          <div class="min-w-0">
+            <p id="fileName" class="text-sm font-medium truncate"></p>
+            <p id="fileSize" class="text-xs text-slate-500 dark:text-slate-400"></p>
+          </div>
+        </div>
+        <button id="removeFile" type="button" aria-label="Quitar archivo" title="Quitar archivo"
+          class="p-1 text-slate-400 hover:text-red-500 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+
+      <!-- Progreso (solo muestra estados reales: la subida tiene porcentaje; el procesado no se puede medir) -->
+      <div id="progressWrap" class="hidden mt-4 text-left" role="status" aria-live="polite">
+        <div class="flex justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
+          <span id="progressLabel">Subiendo…</span>
+          <span id="progressPct"></span>
+        </div>
+        <div class="h-2 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
+          <div id="progressBar" class="h-full bg-blue-600 rounded-full transition-all" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div id="errorBox" role="alert" class="hidden mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-left text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"></div>
+
+      <!-- Perfil de conversión -->
+      <fieldset class="mt-6 text-left">
+        <legend class="mb-2 text-sm font-medium">Perfil de conversión</legend>
+        <div class="grid gap-3 sm:grid-cols-3" id="modeGroup">
+          <label class="cursor-pointer">
+            <input type="radio" name="mode" value="faithful" class="peer sr-only" />
+            <span class="block h-full rounded-xl border border-slate-200 bg-white p-4 transition hover:border-blue-400 peer-checked:border-blue-500 peer-checked:ring-1 peer-checked:ring-blue-500 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400 dark:border-white/10 dark:bg-white/[0.03]">
+              <span class="block text-sm font-semibold">Fiel al original</span>
+              <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">Máxima trazabilidad: conserva los saltos de línea y no quita cabeceras, pies ni numeración. Solo normaliza artefactos evidentes (espacios, caracteres de control, rellenos de puntos).</span>
+            </span>
+          </label>
+          <label class="cursor-pointer">
+            <input type="radio" name="mode" value="clean" class="peer sr-only" checked />
+            <span class="block h-full rounded-xl border border-slate-200 bg-white p-4 transition hover:border-blue-400 peer-checked:border-blue-500 peer-checked:ring-1 peer-checked:ring-blue-500 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400 dark:border-white/10 dark:bg-white/[0.03]">
+              <span class="block text-sm font-semibold">Optimizado para IA <span class="ml-1 text-xs font-normal text-blue-600 dark:text-blue-400">Por defecto</span></span>
+              <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">Quita cabeceras, pies y numeración repetidos (con evidencia), reconstruye párrafos partidos y elimina duplicados consecutivos exactos. Lo eliminado se lista en el informe.</span>
+            </span>
+          </label>
+          <label class="cursor-pointer">
+            <input type="radio" name="mode" value="compact" class="peer sr-only" />
+            <span class="block h-full rounded-xl border border-slate-200 bg-white p-4 transition hover:border-blue-400 peer-checked:border-blue-500 peer-checked:ring-1 peer-checked:ring-blue-500 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400 dark:border-white/10 dark:bg-white/[0.03]">
+              <span class="block text-sm font-semibold">Compacto</span>
+              <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">Como «Optimizado para IA», y además reduce ruido de formato Markdown (relleno de tablas, negritas redundantes, líneas en blanco). No descarta palabras.</span>
+            </span>
+          </label>
+        </div>
+        <p id="profileNotice" class="mt-3 text-xs text-slate-500 dark:text-slate-400"></p>
+      </fieldset>
+
+      <!-- Opciones avanzadas (agrupadas, colapsadas por defecto). Cada control se envía a POST /convert. -->
+      <details id="advanced" class="group mt-6 text-left rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-white/[0.03]">
+        <summary class="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">
+          <span>Opciones avanzadas</span>
+          <svg class="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </summary>
+
+        <div class="grid gap-6 border-t border-slate-200 px-4 py-5 dark:border-white/10 md:grid-cols-2">
+
+          <fieldset>
+            <legend class="text-sm font-semibold">Cabeceras, pies y numeración</legend>
+            <div class="mt-2 space-y-2">
+              <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="remove_headers_footers" data-opt class="mt-1" />
+                <span>Quitar cabeceras y pies repetidos<span class="block text-xs text-slate-500 dark:text-slate-400">Solo texto que se repite en el mismo sitio de varias páginas y no aparece en el cuerpo. Si hay dudas se conserva y se avisa.</span></span></label>
+              <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="remove_page_numbers" data-opt class="mt-1" />
+                <span>Quitar numeración de página<span class="block text-xs text-slate-500 dark:text-slate-400">Solo números que siguen el orden de las páginas («Página 3 de 10», 1, 2, 3…). Un número constante (p. ej. un año) no se toca.</span></span></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend class="text-sm font-semibold">Párrafos y duplicados</legend>
+            <div class="mt-2 space-y-2">
+              <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="join_paragraphs" data-opt class="mt-1" />
+                <span>Reconstruir párrafos partidos<span class="block text-xs text-slate-500 dark:text-slate-400">Une líneas y palabras partidas con guion solo con evidencia clara. No une listas, campos de formulario ni filas de tabla.</span></span></label>
+              <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="remove_duplicates" data-opt class="mt-1" />
+                <span>Quitar párrafos duplicados consecutivos exactos<span class="block text-xs text-slate-500 dark:text-slate-400">Nunca toca firmas, fechas ni importes.</span></span></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-500/25 dark:bg-amber-500/5">
+            <legend class="px-1 text-sm font-semibold">Descartar contenido <span class="font-normal text-amber-700 dark:text-amber-300">(desactivado siempre; solo si lo pides)</span></legend>
+            <div class="mt-1 grid gap-2 md:grid-cols-3">
+              <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="omit_empty_fields" data-opt class="mt-1" />
+                <span>Omitir campos vacíos<span class="block text-xs text-slate-500 dark:text-slate-400">Se pierde la información de que el campo existía y estaba en blanco.</span></span></label>
+              <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="omit_redundant_headings" data-opt class="mt-1" />
+                <span>Omitir encabezados idénticos seguidos<span class="block text-xs text-slate-500 dark:text-slate-400">Solo si el encabezado repite exactamente el anterior.</span></span></label>
+              <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="remove_repeated_blocks" data-opt class="mt-1" />
+                <span>Quitar párrafos largos repetidos<span class="block text-xs text-slate-500 dark:text-slate-400">También los no consecutivos. Un texto legal puede repetirse a propósito.</span></span></label>
+            </div>
+          </fieldset>
+
+          <div>
+            <label for="table_format" class="block text-sm font-semibold">Formato de tablas</label>
+            <select id="table_format" data-opt-select
+              class="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/15 dark:bg-[#12151C] dark:text-slate-100 dark:focus:ring-blue-500/30">
+              <option value="auto" selected>Automático (según la estructura real)</option>
+              <option value="markdown">Tabla Markdown</option>
+              <option value="linear">Lineal («Columna: valor»)</option>
+              <option value="literal">Texto literal (sin interpretar)</option>
+            </select>
+            <p id="tableHint" class="mt-1.5 text-xs text-slate-500 dark:text-slate-400"></p>
+          </div>
+
+          <div>
+            <label for="image_mode" class="block text-sm font-semibold">Imágenes</label>
+            <select id="image_mode" data-opt-select
+              class="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/15 dark:bg-[#12151C] dark:text-slate-100 dark:focus:ring-blue-500/30">
+              <option value="ignore">Ignorar imágenes</option>
+              <option value="markers" selected>Marcar su posición</option>
+              <option value="extract" id="extractOption" hidden disabled>Extraer y referenciar</option>
+              <option value="describe" id="describeOption">Describir con un modelo de visión</option>
+            </select>
+            <p id="imagesHint" class="mt-1.5 text-xs text-slate-500 dark:text-slate-400"></p>
+            <label id="imageMarkersRow" class="mt-2 hidden items-start gap-2 text-sm"><input type="checkbox" id="image_markers" data-opt class="mt-1" />
+              <span>Dejar igualmente un marcador donde había una imagen</span></label>
+            <p class="mt-1.5 text-xs text-slate-500 dark:text-slate-400">El tratamiento de imágenes es independiente del perfil de texto.</p>
+          </div>
+        </div>
+      </details>
+
+      <p id="capsNotice" class="mt-3 hidden text-xs text-slate-500 dark:text-slate-400"></p>
+
+      <!-- Convertir (la conversión se lanza sola al elegir el PDF; este botón sirve para repetirla con otras opciones) -->
+      <button id="convertBtn" type="button" disabled
+        class="mt-6 inline-flex min-w-[220px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-white/10 dark:disabled:text-slate-500">
+        <svg id="spinner" class="hidden h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"></circle>
+          <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" class="opacity-75"></path>
+        </svg>
+        <span id="convertLabel">Convertir PDF</span>
+      </button>
+      <p id="staleHint" class="hidden mt-2 text-xs text-amber-600 dark:text-amber-400">Has cambiado las opciones: vuelve a convertir para aplicarlas.</p>
+    </section>
+
+    <!-- Avisos de la conversión (OCR, pérdidas posibles, tablas aproximadas...) -->
+    <section id="warnSection" class="hidden mx-auto max-w-4xl" aria-labelledby="warnTitle">
+      <div class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200" role="status">
+        <p id="warnTitle" class="font-semibold">Avisos sobre esta conversión</p>
+        <ul id="warnList" class="mt-1 list-disc space-y-1 pl-5"></ul>
+      </div>
+    </section>
+
+    <!-- Resultado -->
+    <section id="resultSection" class="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#12151C]" aria-label="Resultado de la conversión">
+
+      <!-- Barra de herramientas -->
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-6 dark:border-white/10">
+        <div class="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-sm dark:border-white/10 dark:bg-white/5" role="group" aria-label="Vista">
+          <button type="button" data-view="editor" class="view-btn rounded-md px-3 py-1" aria-pressed="false">Editor</button>
+          <button type="button" data-view="split" class="view-btn rounded-md px-3 py-1" aria-pressed="true">Dividida</button>
+          <button type="button" data-view="preview" class="view-btn rounded-md px-3 py-1" aria-pressed="false">Vista previa</button>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <button id="copyBtn" type="button"
+            class="inline-flex items-center gap-2 rounded-lg border border-transparent bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400">
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" /><path stroke-linecap="round" d="M5 15V6a2 2 0 012-2h9" /></svg>
+            <span id="copyLabel">Copiar Markdown</span>
+          </button>
+          <button id="downloadBtn" type="button"
+            class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/10">
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0 0l-4-4m4 4l4-4M4 19h16" /></svg>
+            <span id="downloadLabel">Descargar archivo .md</span>
+          </button>
+        </div>
+      </div>
+
+      <p id="editedNote" class="hidden border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 sm:px-6 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
+        Has editado el texto: copiar y descargar usan exactamente lo que ves en el editor.
+      </p>
+
+      <!-- Editor / vista previa -->
+      <div id="panes" class="grid divide-y divide-slate-200 lg:grid-cols-2 lg:divide-x lg:divide-y-0 dark:divide-white/10">
+        <div id="editorPane" class="flex min-w-0 flex-col">
+          <div class="flex items-center justify-between bg-slate-50 px-4 py-2 dark:bg-white/[0.04]">
+            <label for="editor" class="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Markdown (editable)</label>
+            <span class="text-xs text-slate-600 dark:text-slate-300">
+              <span id="mChars" class="font-semibold text-slate-900 dark:text-white">0</span> caracteres
+              <span class="mx-1 text-slate-300 dark:text-slate-600" aria-hidden="true">|</span>
+              <span id="mWords" class="font-semibold text-slate-900 dark:text-white">0</span> palabras
+              <span class="mx-1 text-slate-300 dark:text-slate-600" aria-hidden="true">|</span>
+              <span title="Estimación aproximada: caracteres / 4. No es un recuento exacto de ningún modelo.">Tokens estimados: <span id="mTokens" class="font-semibold text-slate-900 dark:text-white">0</span></span>
+            </span>
+          </div>
+          <textarea id="editor" spellcheck="false"
+            class="h-[60vh] min-h-[360px] max-h-[800px] w-full resize-y bg-white p-4 font-mono text-sm leading-relaxed text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 dark:bg-[#12151C] dark:text-slate-100"></textarea>
+        </div>
+        <div id="previewPane" class="flex min-w-0 flex-col">
+          <div class="bg-slate-50 px-4 py-2 dark:bg-white/[0.04]">
+            <span class="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Vista previa</span>
+          </div>
+          <div id="preview" class="md-preview h-[60vh] min-h-[360px] max-h-[800px] overflow-auto p-4 text-sm" tabindex="0" aria-label="Vista previa del Markdown"></div>
+        </div>
+      </div>
+
+      <!-- Métricas -->
+      <div class="border-t border-slate-200 px-4 py-5 sm:px-6 dark:border-white/10">
+        <h2 class="text-sm font-semibold">Métricas</h2>
+        <div class="mt-2 overflow-x-auto">
+          <table class="w-full min-w-[480px] text-left text-xs">
+            <caption class="sr-only">Tamaño del texto según su fuente</caption>
+            <thead class="text-slate-500 dark:text-slate-400">
+              <tr><th scope="col" class="py-1 pr-3 font-medium">Texto</th><th scope="col" class="px-3 py-1 text-right font-medium">Caracteres</th><th scope="col" class="px-3 py-1 text-right font-medium">Palabras</th><th scope="col" class="px-3 py-1 text-right font-medium">Tokens estimados</th></tr>
+            </thead>
+            <tbody id="metricsBody" class="divide-y divide-slate-100 dark:divide-white/5"></tbody>
+          </table>
+        </div>
+        <p id="mCompare" class="mt-2 text-xs text-slate-600 dark:text-slate-300"></p>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Tokens estimados = ceil(caracteres / 4): una aproximación para comparar textos entre sí, no el recuento real de ningún modelo ni un ahorro de coste.
+        </p>
+        <dl id="statsList" class="mt-4 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3"></dl>
+      </div>
+
+      <!-- Informe de cambios -->
+      <details id="reportBox" class="border-t border-slate-200 dark:border-white/10">
+        <summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold sm:px-6 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">Informe de cambios: qué se eliminó o se dejó con dudas</summary>
+        <div id="reportContent" class="space-y-4 px-4 pb-5 text-xs sm:px-6"></div>
+      </details>
+    </section>
+
+    <!-- Para qué sirve (sin promesas que no podamos cumplir) -->
+    <section aria-labelledby="why-title" class="mx-auto max-w-4xl border-t border-slate-200 pt-10 dark:border-white/10">
+      <h2 id="why-title" class="text-xl font-semibold">¿Qué hace MarkPDF y qué no?</h2>
+      <p class="mt-3 leading-relaxed text-slate-600 dark:text-slate-400">
+        Copiar y pegar texto directamente desde un PDF suele romper los saltos de línea, descolocar las tablas y arrastrar ruido repetitivo.
+        MarkPDF reconstruye la estructura que puede detectar y te dice lo que quita o no pudo resolver. No resume, no corrige y no inventa contenido;
+        la extracción de un PDF nunca es perfecta, así que revisa los avisos y los datos críticos en el original.
+      </p>
+      <ul class="mt-6 grid gap-4 sm:grid-cols-3">
+        <li class="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-white/[0.03]">
+          <svg class="mt-0.5 h-5 w-5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+          <span class="text-sm">Tres perfiles sobre un único motor, con cada opción ajustable.</span>
+        </li>
+        <li class="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-white/[0.03]">
+          <svg class="mt-0.5 h-5 w-5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+          <span class="text-sm">Informe de todo lo eliminado y de lo que se conservó por falta de evidencia.</span>
+        </li>
+        <li class="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-white/[0.03]">
+          <svg class="mt-0.5 h-5 w-5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+          <span class="text-sm">Métricas con su fuente y su fórmula, sin cifras de «ahorro» sin denominador.</span>
+        </li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="py-8 text-center text-xs text-slate-400 dark:text-slate-600">MarkPDF</footer>
+
+<script>
+(() => {
+  // Valores por defecto de cada perfil. Deben coincidir con options.py (hay una prueba que lo comprueba).
+  const PROFILE_DEFAULTS = {
+    "faithful": {"remove_headers_footers": false, "remove_page_numbers": false, "join_paragraphs": false, "remove_duplicates": false},
+    "clean":    {"remove_headers_footers": true,  "remove_page_numbers": true,  "join_paragraphs": true,  "remove_duplicates": true},
+    "compact":  {"remove_headers_footers": true,  "remove_page_numbers": true,  "join_paragraphs": true,  "remove_duplicates": true}
+  };
+  // Opciones booleanas que se envían a POST /convert (id del control = nombre del campo del formulario).
+  const BOOL_OPTIONS = ["remove_headers_footers", "remove_page_numbers", "join_paragraphs", "remove_duplicates",
+                        "omit_empty_fields", "omit_redundant_headings", "remove_repeated_blocks", "image_markers"];
+  const SELECT_OPTIONS = ["table_format", "image_mode"];
+
+  const PROFILE_NOTICES = {
+    faithful: 'Se conservan los saltos de línea tal como salen del PDF. Se normalizan espacios, caracteres de control y rellenos de puntos (un campo en blanco queda como «___», no se borra).',
+    clean: 'Esta conversión puede cambiar saltos de línea y quitar cabeceras, pies y duplicados exactos; no resume ni reescribe. Todo lo eliminado aparece en el informe.',
+    compact: 'Además del perfil «Optimizado para IA», se simplifica el formato Markdown. Las palabras y los datos se conservan.',
+  };
+  const IMAGE_HINTS = {
+    ignore: 'No se incluye nada de las imágenes. Se informa de cuántas se omitieron.',
+    markers: 'Se deja una marca con la posición de cada imagen relevante («[Imagen omitida: página 2]»). No se afirma qué contiene. Los logos repetidos se agrupan en una sola marca.',
+    extract: 'Las imágenes se guardan como PNG y se referencian en el texto. La descarga será un .zip con el .md y la carpeta images/.',
+    describe: 'Requiere un modelo de visión que este servidor no tiene configurado.',
+  };
+  const TABLE_HINTS = {
+    auto: 'Tabla Markdown cuando la estructura es regular; formato lineal si es muy ancha o irregular. Se avisa cuando la estructura es aproximada.',
+    markdown: 'Siempre tabla Markdown. Se conservan las celdas vacías.',
+    linear: 'Cada fila como «- Fila n: Columna: valor | …». Útil para tablas anchas.',
+    literal: 'Las filas tal como se extrajeron, sin interpretar, en un bloque de texto.',
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    dropzone: $('dropzone'), fileInput: $('fileInput'), fileCard: $('fileCard'),
+    fileName: $('fileName'), fileSize: $('fileSize'), removeFile: $('removeFile'),
+    progressWrap: $('progressWrap'), progressBar: $('progressBar'),
+    progressLabel: $('progressLabel'), progressPct: $('progressPct'),
+    errorBox: $('errorBox'), convertBtn: $('convertBtn'), convertLabel: $('convertLabel'),
+    spinner: $('spinner'), staleHint: $('staleHint'), modeGroup: $('modeGroup'),
+    warnSection: $('warnSection'), warnList: $('warnList'),
+    imagesHint: $('imagesHint'), tableHint: $('tableHint'), profileNotice: $('profileNotice'),
+    capsNotice: $('capsNotice'), imageMarkersRow: $('imageMarkersRow'), maxMb: $('maxMb'),
+    themeToggle: $('themeToggle'),
+    resultSection: $('resultSection'), mTokens: $('mTokens'), mChars: $('mChars'), mWords: $('mWords'),
+    mCompare: $('mCompare'), metricsBody: $('metricsBody'), statsList: $('statsList'),
+    reportBox: $('reportBox'), reportContent: $('reportContent'), editedNote: $('editedNote'),
+    editor: $('editor'), preview: $('preview'), editorPane: $('editorPane'), previewPane: $('previewPane'),
+    copyBtn: $('copyBtn'), copyLabel: $('copyLabel'), downloadBtn: $('downloadBtn'), downloadLabel: $('downloadLabel'),
+  };
+
+  const state = { file: null, jobId: null, filename: 'documento.md', busy: false, maxBytes: 10 * 1024 * 1024,
+                  metrics: null, delivered: '' };
+  const selectedMode = () => els.modeGroup.querySelector('input[name="mode"]:checked').value;
+  const resultVisible = () => !els.resultSection.classList.contains('hidden');
+  const isEdited = () => resultVisible() && els.editor.value !== state.delivered;
+
+  // ---------- utilidades ----------
+  const fmtNum = (n) => Number(n).toLocaleString('es-ES');
+  const fmtPct = (n) => Math.abs(n).toFixed(1).replace('.', ',');
+  const fmtSize = (b) => b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`;
+  const estimateTokens = (t) => Math.ceil(Array.from(t).length / 4); // mismo estimador que el servidor
+  const countWords = (t) => (t.match(/\S+/g) || []).length;
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text; // siempre textContent: el texto procede del PDF
+    return n;
+  };
+
+  function showError(msg) {
+    els.errorBox.textContent = msg;
+    els.errorBox.classList.toggle('hidden', !msg);
+  }
+
+  function setBusy(busy) {
+    state.busy = busy;
+    els.convertBtn.disabled = busy || !state.file;
+    els.convertBtn.setAttribute('aria-busy', String(busy));
+    els.spinner.classList.toggle('hidden', !busy);
+    els.convertLabel.textContent = busy ? 'Procesando…' : (resultVisible() ? 'Volver a convertir' : 'Convertir PDF');
+  }
+
+  // ---------- tema ----------
+  els.themeToggle.addEventListener('click', () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  });
+
+  // ---------- sesión (Google Login; solo si el servidor lo tiene activado) ----------
+  const auth = { enabled: false, authenticated: false };
+  const LOGIN_MESSAGES = {
+    error: 'No se pudo iniciar sesión con Google. Inténtalo de nuevo.',
+    unverified: 'Tu cuenta de Google no tiene el correo verificado, así que no se puede usar.',
+    unavailable: 'No se puede iniciar sesión en este momento. Inténtalo de nuevo en unos minutos.',
+  };
+
+  function renderAuth(me) {
+    $('loginBox').classList.toggle('hidden', !(auth.enabled && !auth.authenticated));
+    $('authBox').classList.toggle('hidden', !auth.authenticated);
+    if (me.daily_limit) $('dailyLimit').textContent = me.daily_limit;
+    $('userEmail').textContent = me.email || '';
+    $('userEmail').classList.toggle('hidden', !me.email);
+    const q = me.quota;
+    $('quotaCounter').textContent = q ? `Te quedan ${q.remaining} de ${q.limit} conversiones hoy` : '';
+    $('quotaCounter').classList.toggle('hidden', !q);
+  }
+
+  async function loadAuth() {
+    try {
+      const res = await fetch('/auth/me', { cache: 'no-store' });
+      if (!res.ok) return;
+      const me = await res.json();
+      auth.enabled = me.enabled === true;
+      auth.authenticated = auth.enabled && me.authenticated === true;
+      renderAuth(me);
+    } catch (e) { /* sin conexión: decidirá el servidor al convertir */ }
+  }
+
+  $('logoutBtn').addEventListener('click', async () => {
+    try { await fetch('/auth/logout', { method: 'POST' }); } catch (e) { /* se vuelve a consultar abajo */ }
+    await loadAuth();
+  });
+
+  // ---------- capacidades reales del servidor ----------
+  async function loadCapabilities() {
+    try {
+      const res = await fetch('/capabilities');
+      if (!res.ok) return;
+      const caps = await res.json();
+      if (caps.limits) {
+        state.maxBytes = caps.limits.max_upload_mb * 1024 * 1024;
+        els.maxMb.textContent = caps.limits.max_upload_mb;
+      }
+      // La extracción de imágenes (.zip) está oculta por defecto: solo se muestra si el servidor la ofrece.
+      if (caps.image_modes && caps.image_modes.extract === true) {
+        const extractOpt = $('extractOption');
+        extractOpt.hidden = false;
+        extractOpt.disabled = false;
+      }
+      const notes = [];
+      if (caps.image_modes && caps.image_modes.describe === false) {
+        const opt = $('describeOption');
+        opt.disabled = true;
+        opt.textContent = 'Describir con un modelo de visión (no disponible)';
+        notes.push('La descripción de imágenes con un modelo de visión no está disponible en este servidor.');
+      }
+      if (caps.ocr === false) {
+        notes.push('No hay motor de OCR instalado: las páginas escaneadas (sin texto seleccionable) no se podrán leer y se avisará de ello.');
+      }
+      els.capsNotice.textContent = notes.join(' ');
+      els.capsNotice.classList.toggle('hidden', notes.length === 0);
+    } catch { /* sin /capabilities no se deshabilita nada; el servidor validará igualmente */ }
+  }
+
+  // ---------- opciones ----------
+  function applyProfileDefaults() {
+    const defaults = PROFILE_DEFAULTS[selectedMode()];
+    Object.entries(defaults).forEach(([name, value]) => { $(name).checked = value; });
+    // Las opciones que descartan contenido nunca dependen del perfil.
+    ['omit_empty_fields', 'omit_redundant_headings', 'remove_repeated_blocks'].forEach((n) => { $(n).checked = false; });
+    els.profileNotice.textContent = PROFILE_NOTICES[selectedMode()];
+  }
+
+  function refreshHints() {
+    const imageMode = $('image_mode').value;
+    els.imagesHint.textContent = IMAGE_HINTS[imageMode];
+    els.tableHint.textContent = TABLE_HINTS[$('table_format').value];
+    // El marcador solo tiene sentido si se ignoran las imágenes.
+    els.imageMarkersRow.classList.toggle('hidden', imageMode !== 'ignore');
+    els.imageMarkersRow.classList.toggle('flex', imageMode === 'ignore');
+  }
+
+  function markStale() { if (resultVisible()) els.staleHint.classList.remove('hidden'); }
+
+  els.modeGroup.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener('change', () => {
+    applyProfileDefaults();
+    refreshHints();
+    markStale();
+  }));
+  [...BOOL_OPTIONS, ...SELECT_OPTIONS].forEach((name) => $(name).addEventListener('change', () => { refreshHints(); markStale(); }));
+  applyProfileDefaults();
+  refreshHints();
+
+  // ---------- selección de archivo ----------
+  function setFile(file) {
+    showError('');
+    if (!file) return;
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) return showError('El archivo debe ser un PDF.');
+    if (file.size > state.maxBytes) return showError(`El archivo supera el límite de ${Math.round(state.maxBytes / 1024 / 1024)} MB.`);
+    if (isEdited() && !window.confirm('Has editado el Markdown actual. Si conviertes otro archivo se perderán tus cambios. ¿Continuar?')) return;
+    state.file = file;
+    els.fileName.textContent = file.name;
+    els.fileSize.textContent = fmtSize(file.size);
+    els.fileCard.classList.remove('hidden');
+    els.staleHint.classList.add('hidden');
+    els.convertBtn.disabled = false;
+    convert(true); // cero fricción: se convierte nada más elegir el archivo
+  }
+
+  function clearFile() {
+    state.file = null;
+    els.fileInput.value = '';
+    els.fileCard.classList.add('hidden');
+    els.convertBtn.disabled = true;
+    els.progressWrap.classList.add('hidden');
+  }
+
+  els.fileInput.addEventListener('change', (e) => setFile(e.target.files[0]));
+  els.removeFile.addEventListener('click', clearFile);
+
+  const DRAG_CLASSES = ['border-blue-500', 'bg-blue-50', 'dark:bg-blue-500/10'];
+  ['dragenter', 'dragover'].forEach((ev) => els.dropzone.addEventListener(ev, (e) => {
+    e.preventDefault();
+    els.dropzone.classList.add(...DRAG_CLASSES);
+  }));
+  ['dragleave', 'drop'].forEach((ev) => els.dropzone.addEventListener(ev, (e) => {
+    e.preventDefault();
+    els.dropzone.classList.remove(...DRAG_CLASSES);
+  }));
+  els.dropzone.addEventListener('drop', (e) => setFile(e.dataTransfer.files[0]));
+
+  // ---------- conversión ----------
+  function progress(label, pct) {
+    els.progressWrap.classList.remove('hidden');
+    els.progressLabel.textContent = label;
+    els.progressPct.textContent = pct == null ? '' : `${pct}%`;
+    els.progressBar.classList.toggle('indeterminate', pct == null);
+    els.progressBar.style.width = pct == null ? '' : `${pct}%`;
+  }
+
+  function buildForm() {
+    const form = new FormData();
+    form.append('file', state.file);
+    form.append('mode', selectedMode());
+    // Se envía el estado explícito de cada control: lo que ves es lo que se aplica.
+    BOOL_OPTIONS.forEach((name) => form.append(name, $(name).checked ? 'true' : 'false'));
+    SELECT_OPTIONS.forEach((name) => form.append(name, $(name).value));
+    return form;
+  }
+
+  async function convert(skipConfirm) {
+    if (!state.file || state.busy) return;
+    await authReady; // nunca se sube un PDF antes de saber si hace falta sesión
+    if (state.busy) return;
+    if (auth.enabled && !auth.authenticated) return showError('Inicia sesión con Google para convertir tu PDF.');
+    if (!skipConfirm && isEdited() && !window.confirm('Has editado el Markdown. Volver a convertir lo reemplazará y perderás tus cambios. ¿Continuar?')) return;
+    showError('');
+    els.warnSection.classList.add('hidden');
+    setBusy(true);
+    progress('Subiendo el archivo…', 0);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/convert');
+    xhr.responseType = 'json';
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) progress('Subiendo el archivo…', Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.upload.onload = () => progress('Procesando en el servidor (no se puede medir el avance)…', null);
+
+    xhr.onerror = () => { setBusy(false); els.progressWrap.classList.add('hidden'); showError('No se pudo conectar con el servidor.'); };
+    xhr.ontimeout = xhr.onerror;
+    xhr.onload = () => {
+      els.progressWrap.classList.add('hidden');
+      if (auth.enabled) loadAuth(); // actualiza el contador (o detecta que la sesión caducó)
+      const data = xhr.response;
+      if (xhr.status !== 200 || !data) {
+        setBusy(false);
+        let detail = `Error ${xhr.status}`;
+        if (data && data.detail) {
+          detail = typeof data.detail === 'string' ? data.detail : 'Los datos enviados no son válidos.';
+        }
+        return showError(detail);
+      }
+      showResult(data);
+    };
+    xhr.send(buildForm());
+  }
+  els.convertBtn.addEventListener('click', () => convert(false));
+
+  // ---------- resultado ----------
+  function showWarnings(warnings) {
+    els.warnList.replaceChildren(...warnings.map((w) => el('li', null, w)));
+    els.warnSection.classList.toggle('hidden', warnings.length === 0);
+  }
+
+  function showResult(data) {
+    state.jobId = data.job_id || null;
+    state.filename = data.filename || 'documento.md';
+    state.metrics = data.metrics;
+    state.delivered = data.markdown;
+    els.staleHint.classList.add('hidden');
+
+    const warnings = [...(data.warnings || [])];
+    if (data.stats && data.stats.tables_approximate) {
+      warnings.push(`${data.stats.tables_approximate} tabla(s) con estructura aproximada: revísalas en el original.`);
+    }
+    showWarnings(warnings); // lo conservado por falta de evidencia va en el informe de cambios
+
+    if (!data.markdown.trim()) { // nada que mostrar (PDF vacío o escaneado sin OCR): solo los avisos
+      els.resultSection.classList.add('hidden');
+      setBusy(false);
+      return;
+    }
+    els.editor.value = data.markdown;
+    els.resultSection.classList.remove('hidden');
+    els.downloadLabel.textContent = state.jobId ? 'Descargar .zip (.md + imágenes)' : 'Descargar archivo .md';
+    setBusy(false);
+    renderStats(data);
+    renderReport(data);
+    updateMetrics();
+    renderPreview();
+    els.resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function metricsRow(label, m, strong) {
+    const tr = el('tr', strong ? 'font-semibold text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300');
+    tr.append(el('th', 'py-1 pr-3 font-normal text-left', label));
+    [m.chars, m.words, m.tokens].forEach((v) => tr.append(el('td', 'px-3 py-1 text-right tabular-nums', fmtNum(v))));
+    tr.firstChild.scope = 'row';
+    return tr;
+  }
+
+  function updateMetrics() {
+    const text = els.editor.value;
+    const now = { chars: Array.from(text).length, words: countWords(text), tokens: estimateTokens(text) };
+    els.mChars.textContent = fmtNum(now.chars);
+    els.mWords.textContent = fmtNum(now.words);
+    els.mTokens.textContent = fmtNum(now.tokens);
+    els.editedNote.classList.toggle('hidden', !isEdited());
+
+    const m = state.metrics;
+    if (!m) return;
+    els.metricsBody.replaceChildren(
+      metricsRow('Capa de texto del PDF (referencia, sin estructura)', m.source),
+      metricsRow('Extracción (antes de la limpieza configurable)', m.extraction),
+      metricsRow(isEdited() ? 'Resultado actual (editado)' : 'Resultado final', now, true),
+    );
+
+    const ref = m.comparison;
+    let cmp = `Comparación con «${ref.reference}»: ${fmtNum(ref.reference_tokens)} → ${fmtNum(now.tokens)} tokens estimados`;
+    if (ref.reference_tokens > 0) {
+      const pct = ((now.tokens - ref.reference_tokens) / ref.reference_tokens) * 100;
+      if (now.tokens < ref.reference_tokens) cmp += ` (${fmtPct(pct)} % menos)`;
+      else if (now.tokens > ref.reference_tokens) cmp += ` (${fmtPct(pct)} % más)`;
+      else cmp += ' (sin cambio)';
+    }
+    cmp += `. Fórmula: ${ref.formula}.`;
+    els.mCompare.textContent = cmp;
+  }
+
+  function stat(dl, label, value) {
+    const wrap = el('div', 'flex justify-between gap-3 border-b border-slate-100 py-1 dark:border-white/5');
+    wrap.append(el('dt', 'text-slate-500 dark:text-slate-400', label), el('dd', 'font-medium text-slate-900 dark:text-white text-right', value));
+    dl.append(wrap);
+  }
+
+  function renderStats(data) {
+    const s = data.stats;
+    const img = s.images_detail || {};
+    const dl = els.statsList;
+    dl.replaceChildren();
+    stat(dl, 'Perfil', data.profile);
+    stat(dl, 'Páginas', fmtNum(s.pages));
+    stat(dl, 'Tablas', `${fmtNum(s.tables)}${s.tables_approximate ? ` (${s.tables_approximate} aproximadas)` : ''}`);
+    stat(dl, 'Imágenes detectadas', fmtNum(img.detected || 0));
+    stat(dl, 'Imágenes relevantes / repetidas / pequeñas', `${img.relevant || 0} / ${img.repeated || 0} / ${img.small_ignored || 0}`);
+    stat(dl, 'Imágenes marcadas / extraídas', `${img.marked || 0} / ${img.extracted || 0}`);
+    stat(dl, 'Imágenes omitidas / descritas', `${img.omitted || 0} / ${img.described || 0}`);
+    if (s.forms) stat(dl, 'Campos de formulario', `${s.forms.fields} (${s.forms.text_filled} rellenos, ${s.forms.text_empty} vacíos, ${s.forms.checked} marcadas, ${s.forms.unchecked} sin marcar${s.forms.unknown ? `, ${s.forms.unknown} indeterminadas` : ''})`);
+    stat(dl, 'Líneas de cabecera/pie/numeración quitadas', fmtNum(s.margin_lines_removed));
+    stat(dl, 'Rellenos normalizados', fmtNum(s.fillers_removed));
+    stat(dl, 'Duplicados quitados', fmtNum(s.duplicates_removed + s.repeated_blocks_removed + s.redundant_headings_removed));
+    stat(dl, 'Campos vacíos omitidos', fmtNum(s.empty_fields_omitted));
+    if (s.ocr_pages) stat(dl, 'Páginas leídas con OCR', fmtNum(s.ocr_pages));
+    if (s.scanned_pages_without_text) stat(dl, 'Páginas escaneadas sin leer', fmtNum(s.scanned_pages_without_text));
+    const cov = data.report && data.report.coverage;
+    if (cov && cov.checked_pages) stat(dl, 'Cobertura del texto del PDF', `${(cov.coverage * 100).toFixed(1).replace('.', ',')} %`);
+  }
+
+  const KIND_LABELS = {
+    margin: 'Cabecera/pie/numeración', duplicate_block: 'Duplicado consecutivo', repeated_block: 'Párrafo repetido',
+    redundant_heading: 'Encabezado repetido', empty_field: 'Campo vacío omitido', filler: 'Relleno',
+  };
+
+  function renderReport(data) {
+    const r = data.report || {};
+    const box = els.reportContent;
+    box.replaceChildren();
+    const section = (title, items, fmt) => {
+      if (!items || !items.length) return;
+      const wrap = el('div');
+      wrap.append(el('p', 'font-semibold text-slate-700 dark:text-slate-200', title));
+      const ul = el('ul', 'mt-1 list-disc space-y-0.5 pl-5 text-slate-600 dark:text-slate-300');
+      items.forEach((it) => ul.append(el('li', null, fmt(it))));
+      wrap.append(ul);
+      box.append(wrap);
+    };
+    const pagesLabel = (p) => (p.length > 6 ? `${p.slice(0, 6).join(', ')}… (${p.length} páginas)` : p.join(', '));
+    section('Cabeceras, pies y numeración detectados y quitados', r.margins,
+      (m) => `${m.kind === 'header' ? 'Cabecera' : m.kind === 'footer' ? 'Pie' : 'Numeración'} «${m.text}» — páginas ${pagesLabel(m.pages)}`);
+    section('Conservado por falta de evidencia', r.margins_uncertain, (t) => t);
+    const removed = (r.removed || []).filter((x) => x.kind !== 'margin');
+    section('Otros elementos eliminados', removed,
+      (x) => `${KIND_LABELS[x.kind] || x.kind}${x.page ? ` (pág. ${x.page})` : ''}: «${x.text}»`);
+    if (r.removed_truncated) box.append(el('p', 'text-slate-500', 'La lista de elementos eliminados está recortada.'));
+    section('Posible pérdida de texto en la extracción', (r.coverage && r.coverage.pages_with_loss) || [],
+      (p) => `Página ${p.page}: unos ${p.missing_chars} caracteres alfanuméricos del PDF no aparecen en el Markdown`);
+    section('Correcciones de formato aplicadas', r.validation, (t) => t);
+    if (!box.children.length) box.append(el('p', 'text-slate-500 dark:text-slate-400', 'No se eliminó nada ni quedó nada pendiente de revisar.'));
+  }
+
+  // ---------- vista previa (misma fuente que copiar/descargar: el editor) ----------
+  const previewRenderer = (() => {
+    if (!window.marked) return null;
+    const r = new marked.Renderer();
+    // Las imágenes extraídas se guardan en el .zip: en la vista previa no existen como archivo.
+    r.image = (href, title, text) => `<span class="img-ref">Imagen: ${String(text || '').replace(/[<>&"]/g, '')} (${String(href || '').replace(/[<>&"]/g, '')})</span>`;
+    return r;
+  })();
+
+  let previewTimer = null;
+  function renderPreview() {
+    const md = els.editor.value;
+    if (window.marked && window.DOMPurify) {
+      els.preview.style.whiteSpace = '';
+      // breaks:true muestra cada salto de línea del PDF (formularios, perfil «fiel») tal como está en el texto.
+      els.preview.innerHTML = DOMPurify.sanitize(marked.parse(md, { breaks: true, renderer: previewRenderer }));
+    } else {
+      els.preview.textContent = md;
+      els.preview.style.whiteSpace = 'pre-wrap';
+    }
+  }
+  els.editor.addEventListener('input', () => {
+    updateMetrics();
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(renderPreview, 200);
+  });
+
+  // ---------- modos de vista ----------
+  function setView(view) {
+    document.querySelectorAll('.view-btn').forEach((b) => {
+      const active = b.dataset.view === view;
+      b.setAttribute('aria-pressed', String(active));
+      ['bg-white', 'dark:bg-white/15', 'shadow-sm', 'font-semibold'].forEach((c) => b.classList.toggle(c, active));
+      ['text-slate-500', 'dark:text-slate-400'].forEach((c) => b.classList.toggle(c, !active));
+    });
+    els.editorPane.classList.toggle('hidden', view === 'preview');
+    els.previewPane.classList.toggle('hidden', view === 'editor');
+    $('panes').classList.toggle('lg:grid-cols-2', view === 'split');
+    $('panes').classList.toggle('lg:grid-cols-1', view !== 'split');
+  }
+  document.querySelectorAll('.view-btn').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+  setView('split');
+
+  // ---------- copiar ----------
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    els.editor.select();
+    if (!document.execCommand('copy')) throw new Error('copy failed');
+    window.getSelection().removeAllRanges();
+  }
+
+  let copyTimer = null;
+  els.copyBtn.addEventListener('click', async () => {
+    try {
+      await copyText(els.editor.value);
+      els.copyLabel.textContent = 'Copiado';
+      els.copyBtn.classList.add('copied');
+    } catch {
+      els.copyLabel.textContent = 'No se pudo copiar';
+    }
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      els.copyLabel.textContent = 'Copiar Markdown';
+      els.copyBtn.classList.remove('copied');
+    }, 2000);
+  });
+
+  // ---------- descargar ----------
+  els.downloadBtn.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markdown: els.editor.value, filename: state.filename, job_id: state.jobId }),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const blob = await res.blob();
+      const isZip = blob.type === 'application/zip';
+      const name = isZip ? state.filename.replace(/\.md$/i, '.zip') : state.filename;
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: name });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showError(`No se pudo descargar: ${err.message}`);
+    }
+  });
+
+  const authReady = loadAuth();
+  const loginProblem = new URLSearchParams(location.search).get('login');
+  if (loginProblem) {
+    showError(LOGIN_MESSAGES[loginProblem] || LOGIN_MESSAGES.error);
+    history.replaceState(null, '', location.pathname);
+  }
+  loadCapabilities();
+})();
+</script>
+</body>
+</html>
